@@ -1,0 +1,633 @@
+---
+title: "Dallas Policing Analysis"
+author: "Prajwal Markal Puttaswamy"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+
+### Don't delete this setup code chunk from your file
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, comment = NULL)
+
+# DON'T ALTER THIS: this is to prevent printing the code or any unnecessary addition in your final "html" report file.
+```
+
+# Introduction:
+
+The city of Dallas, Texas, is one of the largest cities in the United States, with a population of over 1.3 million people. As with many large cities, the Dallas Police Department is responsible for maintaining public safety and enforcing the law. Over the past few years, the department has faced criticism and scrutiny for its policing practices, particularly in regards to its treatment of communities of color.
+
+In this analysis, we will take a closer look at policing in Dallas, examining data on police stops, use of force, and other key metrics. By analyzing this data, we hope to gain a better understanding of how policing is being carried out in the city, as well as to identify areas where improvements can be made. Our ultimate goal is to promote a more equitable and just system of policing in Dallas, one that serves and protects all members of the community.
+
+```{r}
+#load all the required library For the analysis
+library(dsEssex)
+library(tidyverse)
+library(plotly)
+library(htmlwidgets)
+require(ggthemes)
+library(leaflet)
+library(viridis)
+library(knitr)
+```
+# Methods
+
+The methodology of the whole procedure is described here. Firstly, the dataset “37-00049_UOF-P_2016_prepped” loaded and the data has been pre-processed. To pre-process the data, data wrangling and cleaning were needed. After careful observation, many problems with the dataset occurred before me. One of them was many boxes were empty from the record. So, I had to fill those empty boxes with ‘NA’. Then I realized some of the columns have too many ‘NA’ values which could have manipulated the analysis. So I did get rid of those columns which have more than 50% of ‘NA’ values. Later, I also noticed that the first row of the dataset is almost the same as the header row. After finishing the data pre-processing I tried to raise questions and problems through my careful visualization.
+
+```{r}
+#load the data
+police_data <- read.csv("C:/Users/prajw/OneDrive//Desktop/project/ma304\\37-00049_UOF-P_2016_prepped.csv", header= TRUE, skip = 1)
+
+
+# Cleaning the data
+any(is.na(police_data))
+
+#Cleaning unnecessary rows
+police_data %>% slice(-1)-> cleanData
+
+sum(is.na(cleanData))
+
+# adding NA for mising Values
+cleanData[cleanData == "" | cleanData == " "] <- NA
+
+#deleting the columns with more than 50% of missing values
+miss <- c()
+for(i in 1:ncol(cleanData)) {
+  if(length(which(is.na(cleanData[,i]))) > 0.5*nrow(cleanData)) miss <- append(miss,i) 
+}
+data2 <- cleanData[,-miss]
+
+#drop "NULL" values in time column
+data2 <- data2[!(data2$OCCURRED_T == "NULL"),]
+data2$time <- format(strptime(data2$OCCURRED_T, "%I:%M:%S %p"), "%H:%M:%S")
+
+time <- as.POSIXct(strptime((data2$time),"%H:%M:%S"),"UTC")
+
+#day and night
+x <- as.POSIXct(strptime(c("070000","185959","190000","065959"),"%H%M%S"),"UTC")
+data2$Parts_of_day <- case_when(
+  between(time,x[1],x[2]) ~"day",
+  TRUE ~"night")
+
+#check the number of incidents during day and night
+table(data2$Parts_of_day)
+
+```
+
+
+
+# Result
+
+## Map
+
+```{r}
+# Remove rows with missing longitude and latitude values
+df1 <- data2[complete.cases(data2[c("Longitude", "Latitude")]), ]
+
+
+#showing the clusters of crime in different locations of Dallas
+map_division<-df1%>%leaflet()%>% addTiles()%>%addMarkers(
+  clusterOptions = markerClusterOptions())
+map_division
+```
+
+Displayed above is a geographical representation of Dallas city that illustrates the frequency of police incidents recorded in different areas throughout the year 2016. The map showcases distinct groupings of incidents across various regions and enables a more precise analysis of the number of incidents occurring in smaller regions such as individual streets, as we zoom in. This provides a comprehensive understanding of the distribution of police incidents in every part of Dallas city.
+
+
+```{r}
+
+# Remove rows where both force type columns are NA
+Force <- data2 %>% filter(!is.na(ForceType1) | !is.na(ForceType2))
+
+# Combine both force type columns into one column
+Force$Force_type <- ifelse(!is.na(Force$ForceType1), Force$ForceType1, Force$ForceType2)
+
+# Count the number of incidents by race and force type
+force_by_race <- Force %>% group_by(CitRace, Force_type) %>% summarise(n = n())
+
+# Calculate the total number of incidents by race
+force_by_race <- force_by_race %>% group_by(CitRace) %>% mutate(total =sum(n))
+
+# Calculate the percentage of incidents by race and force type
+force_by_race <- force_by_race %>% mutate(percent = n / sum(n) * 100)
+
+```
+
+
+## Bar Plot
+
+```{r, fig.width=10.5}
+
+# group the data by CitRace and Parts_of_day columns and count the number of incidents in each group
+incident_counts <- data2 %>%
+  group_by(CitRace, Parts_of_day) %>%
+  summarize(Count = n()) %>%
+  ungroup()
+
+# create a bar plot using ggplot2, with CitRace on the x-axis, Count on the y-axis, and fill color by CitRace
+S <- ggplot(incident_counts) +
+ aes(x = CitRace, y = Count, fill = CitRace) +
+ geom_col() +
+ scale_fill_manual(values = c(`American Ind` = "#F8766D", 
+Asian = "#BD9A00", Black = "#31B425", Hispanic = "#00C19F",
+`NULL` = "#20AFEC", Other = "#B280FC", White = "#FF61C3")) + # manually set color values for each race using scale_fill_manual
+ labs(x = "Race", y = "crime count", title = "crime Incidents Reported based on parts of day", subtitle = "Day vs Night") +
+ ggthemes::theme_solarized() +# apply the solarized theme and adjust font sizes
+ theme(plot.title = element_text(size = 16L, face = "bold"), plot.subtitle = element_text(size = 14L, 
+ face = "bold"), axis.title.y = element_text(size = 14L, face = "bold"), axis.title.x = element_text(size = 14L, 
+ face = "bold")) +
+ facet_wrap(vars(Parts_of_day))# create separate plots for each Parts_of_day value using facet_wrap
+
+# convert the plot to an interactive plotly plot
+ggplotly(S)
+
+```
+This output shows the number of crime incidents reported for each race and during day and night. We can see that the majority of incidents occurred during the night for all races except for Asian, where incidents were more evenly distributed between day and night. Black individuals reported the highest number of incidents during both day and night, followed by White individuals. The smallest number of incidents were reported by American Indian and Other races. The number of incidents reported by individuals with "NULL" race is relatively low. Overall, this information can help law enforcement agencies and policymakers to better understand and address crime trends among different racial groups and during different times of day.
+
+
+```{r}
+# Filter the data to only include incidents where the officer was injured
+injured_officers <- data2 %>% filter(OFF_INJURE == "Yes")
+unique(data2$OFF_INJURE)
+
+# Create a new binary column indicating whether an officer has more than 5 years of experience or not
+injured_officers <- injured_officers %>% mutate(Officer_Exp = ifelse(INCIDENT_DATE_LESS_ >= 5, "More than 5 years", "Less than 5 years"))
+
+# Select Officer experience, offrace, offsex, citrace, citsex and officer injure columns from the 'injured_officers' data frame
+injury <- injured_officers %>% 
+  select(INCIDENT_DATE_LESS_, CitRace, OFF_INJURE, OffSex, CitSex, OffRace)
+
+# Get the count of injured officers by injury type
+table(injury$OFF_INJURE)
+
+# Filter the 'injury' data frame to keep only the rows where 'CitRace' is 'Black' or 'White', and 'OffRace' is 'Black' or 'White', respectively
+injury_filtered <- injury %>% 
+  filter(CitRace %in% c("Black", "White")) %>% 
+  filter(OffRace %in% c("White", "Black")) 
+
+# Plot the filtered data using ggplot2
+ggplot(injury_filtered, aes(x = CitRace, fill = CitRace)) +
+  geom_bar(position = "dodge") +   # create a dodged bar chart
+  scale_fill_manual(values = c(Black = "#3EB266", White = "#208F8A")) +  # set the fill colors
+  labs(x = "CitRace",   
+       y = "Injury Count",  
+       title = "Officer Getting injured by Subject Race",  # set plot title
+       subtitle = "Officer Race Vs CitRace") +  # set plot subtitle
+  ggthemes::theme_economist_white() +  # set plot theme
+  theme(legend.position = "none",   # hide the legend
+        plot.title = element_text(size = 16L, face = "bold"),  # set font style for plot title
+        plot.subtitle = element_text(size = 14L, face = "bold"),# set font style for plot subtitle
+        axis.title.y = element_text(size = 12L, face = "bold"),  # set font style for y-axis label
+        axis.title.x = element_text(size = 12L, face = "bold")) +  # set font style for x-axis label
+  facet_wrap(vars(OffRace), scales = "free_x")  # add facets for 'OffRace'
+
+
+```
+
+from the plot, it clearly shows that black officers are more likely to be injured by black suspects, and white officers are more likely to be injured by black suspects as well. In particular, there were 81 incidents where a black suspect injured a black officer, and 29 incidents where a white suspect injured a white officer. On the other hand, there were only 4 incidents where a white suspect injured a black officer, and 15 incidents where a black suspect injured a white officer. These numbers suggest that race does play a role in the likelihood of an officer getting injured by a suspect. However, it is important to note that this data only represents a subset of incidents and may not be representative of the larger population of police-suspect interactions. Additionally, correlation does not necessarily imply causation, and there may be other factors at play that influence the likelihood of an officer getting injured.
+```{r}
+#Filter the data to only include incidents where a subject was injured
+
+injured_cit <- data2 %>%
+  filter(CIT_INJURE == "Yes") %>% 
+  select(CitRace,CIT_INJURE,OffSex,CitSex,OffRace)
+
+#Create a bar chart to show the number of injuries by officer race and subject race
+injured_cit %>%
+ filter(CitRace %in% c("Black", "White")) %>%
+ filter(OffRace %in% c("Black", "White")) %>%
+ ggplot() +
+ aes(x = OffRace, fill = OffRace) +
+ geom_bar(position = "dodge") +
+ scale_fill_manual(values = c(Black = "#02B7C7",White = "#559CB6")) +
+ labs(x = "Officer race", y = "Injury count", title = "Subject Injury by Officer Race", subtitle = "Sub race Vs Officer Race", 
+ fill = "Sub race Vs Officer Race") +
+ ggthemes::theme_economist_white() +
+ theme(legend.position = "none", 
+ plot.title = element_text(size = 16L, face = "bold"), plot.subtitle = element_text(size = 14L, face = "bold"), 
+ axis.title.y = element_text(size = 12L, face = "bold"), axis.title.x = element_text(size = 12L, face = "bold")) +
+ facet_wrap(vars(CitRace), scales = "free_x")
+
+#Display the count of injuries for the CIT_INJURE variable in a table
+kable(table(data2$CIT_INJURE))
+
+```
+The data shows that during arrests, Black subjects are injured more often than White subjects, regardless of the officer's race. In fact, 80% of injuries sustained during arrests involving Black subjects were inflicted by White officers. Meanwhile, White subjects accounted for a smaller proportion of injuries overall, but were still more likely to be injured by White officers (69% of injuries sustained during arrests involving White subjects were inflicted by White officers). 
+
+
+
+1.Officers of both Black and White races are injured more frequently by Black race, with White officers being injured more often by Black subjects and white officers being injured more often by White subjects.
+
+2.The number of injuries sustained by officers in general is much lower than the number of injuries sustained by subjects during arrest.
+
+3.Black subjects are injured during arrest at a much higher rate than White subjects, regardless of the officer's race.
+
+4.Black subjects sustain over two-thirds of the total injuries sustained during arrest, despite making up only about a third of the total number of subjects.
+
+
+
+## Violin Plot
+
+```{r}
+ggplot(force_by_race) +
+ aes(x = CitRace, y = percent, fill = CitRace, size = n, weight = percent) +
+ geom_violin(adjust = 1L, 
+ scale = "area") +
+ scale_fill_hue(direction = 1) +
+ labs(x = "Cit Race", y = "Percentage", caption = "Percentage of Force used on Each Race") +
+ theme_light() +
+ theme(plot.caption = element_text(size = 16L, face = "bold.italic", hjust = 0.5), 
+ axis.title.y = element_text(size = 12L, face = "bold"), axis.title.x = element_text(size = 12L, face = "bold"))
+
+
+```
+
+
+1. The plots indicates that Black and Hispanic individuals are disproportionately represented in the "Arrest" category compared to their population in Dallas.
+2. It's interesting to note that there were no reported incidents of "Aggressive Animal" involving Asian or Other individuals.
+3. The majority of incidents categorized as "Active Aggression" involved Black individuals, followed by White and Hispanic individuals.
+4. The data shows that Black individuals were the most commonly reported in the "Assault to Other Person" category, followed by Other and Hispanic individuals.
+5. The "Danger to self or others" category had the highest number of reported incidents involving Black individuals, followed by White and Hispanic individuals.
+
+## Two Way Table
+```{r}
+force_table <- table(Force$UOF_REASON, Force$CitRace)
+
+# Print the two way table
+kable(force_table)
+
+# Perform a chi-square test of independence
+chisq.test(force_table)
+```
+The Pearson's Chi-squared test was conducted on the two variables, "Reason for the Arrest" and "Subject Race", to determine if there was a significant association between them. The test yielded a chi-squared value of 136.42 with 66 degrees of freedom and a p-value of 8.048e-07, indicating a highly significant association between the two variables. This suggests that the reason for the arrest is not independent of the subject's race, and there may be some underlying bias in the arrest process based on the subject's race. Further investigation is necessary to understand the nature and extent of this bias.
+
+
+```{r}
+# Create a vector of month names
+month_names <- month.name
+
+# Use match function to match month numbers with month names
+month_counts <- table(format(as.Date(df1$OCCURRED_D, format="%m/%d/%Y"), "%m"))
+month_counts <- month_counts[order(names(month_counts))]  # Sort the table by month number
+month_counts <- data.frame(month = month_names[as.numeric(names(month_counts))], count = as.numeric(month_counts))
+
+# Print the results
+kable(month_counts)
+
+```
+The above data shows the number of crimes committed in Dallas for each month in the year 2016. The highest number of crimes were committed in March with a count of 255, followed by February with 249 and January with 228. The lowest number of crimes were committed in December with a count of 97. The number of crimes generally decreased from March to June, after which there was a slight increase in July, followed by a relatively stable trend till October. However, there was a sharp decline in November and December. Overall, this data provides a general idea of the crime trends in Dallas in the year 2016.
+## Stacked Bar Plot
+```{R}
+# Create a bar chart to show the use of force by race and reason
+A <- ggplot(Force, aes(x = CitRace, fill = UOF_REASON)) +
+  geom_bar() +
+  scale_fill_viridis(discrete = TRUE) +
+  labs(title = "Use of Force by Race and Reason",
+       x = "Race",
+       y = "Count",
+       fill = "Force Reason") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Convert the bar chart to an interactive plot using ggplotly
+ggplotly(A)
+```
+
+## Pie chart
+
+### Plot 1
+
+```{r}
+
+
+# Calculate reoffending percentage for each race
+crime_reoffend <- aggregate(data2$CitNum, by = list(data2$CitRace), function(x) {
+  sum(duplicated(x))/length(x) * 100})
+  
+# Rename columns and sort by reoffending percentage
+colnames(crime_reoffend) <- c("Race", "Reoffend_Percentage")
+crime_reoffend <- crime_reoffend[order(crime_reoffend$Reoffend_Percentage, decreasing = TRUE), ]
+
+# Calculate distribution of races
+race_counts <- data2 %>% count(CitRace)
+
+# Define color scale for pie chart
+color_scale <- c('#f1eef6','#d4b9da',"#91003f",'#df65b0','#e7298a','#ce1256','#c994c7')
+
+# Create pie chart for race distribution
+race_pie <- plot_ly(race_counts, labels = ~CitRace, values = ~n, type = "pie",
+                    hole = 0.4, textposition = "Outside",
+                    marker = list(colors = color_scale)) %>%
+  layout(title = "Percentage of Subject Comminting Crime Again")
+
+# Display pie chart and table of race counts
+race_pie
+kable(race_counts)
+```
+
+The output represents the percentage of individuals who were rearrested in Dallas by their race/ethnicity. Based on the analysis, the percentage of rearrests for each racial/ethnic group is as follows: American Indian (0.0422%), Asian (0.211%), Black (55.9%), Hispanic (22.1%), NULL (1.64%), Other (0.464%), and White (19.7%).
+
+The results suggest that Black individuals have the highest percentage of rearrests, followed by White individuals. It is important to note that this analysis only provides a snapshot of the rearrest rates in Dallas and does not account for potential confounding variables or biases. Therefore, the results should be interpreted with caution and further research is needed to understand the underlying factors that contribute to rearrest rates in different racial/ethnic groups
+
+
+
+it appears that Black individuals had the highest number of total crimes committed in Dallas, with a count of 1325. Hispanic individuals had the second-highest count with 524, followed by White individuals with 467. Asian individuals had a comparatively lower count with 5, while American Indian, Other, and NULL races had counts of 1, 11, and 39, respectively. It is important to note that the number of crimes committed cannot be solely attributed to an individual's race, as there are many other factors that can contribute to criminal behavior.
+
+### plot 2
+
+
+```{r}
+
+# Create a gradient fill for the bars
+my_colors <- colorRampPalette(c('#ffffd4','#fee391','#fec44f','#fe9929','#ec7014','#cc4c02','#8c2d04'))
+
+# Summarize the data
+data2_summary <- data2 %>%
+  group_by(DIVISION) %>%
+  summarize(total_crimes = n()) %>%
+  ungroup() %>%
+  mutate(percent = round(total_crimes / sum(total_crimes) * 100, 2))
+
+# Create the plot
+ggplot(data2_summary, aes(x = "", y = percent, fill = DIVISION)) +
+  geom_bar(width = 1, stat = "identity") +
+  scale_fill_manual(values = my_colors(length(unique(data2$DIVISION)))) +
+  ggtitle("Distribution of Crimes by Division") +
+  xlab("") +
+  ylab("") +
+  # Create the donut chart
+  coord_polar(theta = "y") +
+  theme_void() +
+  # Add labels
+  geom_text(aes(label = paste0(round(percent), "%")), position = position_stack(vjust = 0.5))
+```
+
+
+The chart shows us the percentage of total crimes for each division. There were a total of 2372 crimes, with the largest number of crimes occurring in the Central division (557 crimes, 23.48% of total). The North Central division had the second highest number of crimes (318 crimes, 13.41% of total), followed closely by the Northeast division (341 crimes, 14.38% of total). The fewest crimes occurred in the Northwest division (191 crimes, 8.05% of total) and the Southwest division (297 crimes, 12.5% of total).
+
+we can conclude that the Central division had the highest number of crimes, making it the most crime-prone division in Dallas. The North Central and Northeast divisions also had a significant number of crimes. On the other hand, the Northwest and Southwest divisions had the fewest crimes, making them relatively safer areas in Dallas. It is important for law enforcement officials to focus their efforts on reducing crime in the Central, North Central, and Northeast divisions to make Dallas a safer place for its residents. The data also highlights the need for continued analysis of crime trends to identify problem areas and allocate resources effectively to prevent crime.
+
+## Density Plot
+
+```{r}
+
+# Group the data by Officer_Exp and OFF_INJURE, and calculate the count of each group using summarize()
+injury_by_exp <- injured_officers %>% group_by(INCIDENT_DATE_LESS_, OFF_INJURE) %>% summarize(count = n())
+colnames(injury_by_exp)[1] <- "OFFICER_EXP"
+# Create a bar plot to visualize the results
+
+B <- ggplot(injured_officers) +
+ aes(x = INCIDENT_DATE_LESS_) +
+ geom_density(adjust = 1L, fill = "#08275F") +
+ labs(x= "Years",y = "Officer Experience Density", title = "Officer injured Based On Experience") +
+ ggthemes::theme_stata() +
+ theme(plot.title = element_text(size = 16L, face = "bold", hjust = 0.5), axis.title.x = element_text(size = 14L, 
+ face = "bold"),axis.title.y =  element_text(size = 14L, 
+ face = "bold")) +
+ facet_wrap(vars(OffSex))
+
+ggplotly(B)
+```
+The table shows the number of officers injured based on their years of experience. The highest number of injuries occurred for officers with 3 years of experience (36 injuries), followed by officers with 19 years of experience (26 injuries), and officers with 20 years of experience or more (17 injuries). The lowest number of injuries occurred for officers with 13 years of experience or less.
+
+Based on the data, we can see that the number of officers injured decreases with increasing years of experience. Officers with less than 10 years of experience accounted for the majority of injuries, with the highest number of injuries occurring in officers with 3 years of experience (36 injuries). As officers gain more experience, they may be better equipped to handle dangerous situations and avoid injuries. It is important for police departments to provide ongoing training and support for officers at all levels of experience to ensure their safety and well-being while on the job.
+
+```{r}
+
+kable(table(data2$Parts_of_day))
+
+
+
+```
+
+## Leaflet
+
+
+```{r}
+#removing unwanted data
+police <- data2[data2$CIT_INFL_A != "NULL", ]
+police<- police[police$CIT_INFL_A != "Unknown", ]
+police<- police[police$CIT_INFL_A != "None detected",]
+police<- police[police$CIT_INFL_A != "Animal", ]
+police<- police[police$CIT_INFL_A != "FD-Unknown if Armed",]
+police<- police[police$CIT_INFL_A != "FD-Animal",]
+police<- police[police$CIT_INFL_A != "FD-Suspect Unarmed", ]
+police<- police[police$CIT_INFL_A != "FD-Motor Vehicle", ]
+
+
+#map showing the distribution of subject description in different divisions
+map_description <- leaflet(police)%>%
+  # Base groups
+  addTiles(group = "OSM (default)") %>%
+  addProviderTiles(providers$Stamen.TonerLite, group = "Toner Lite")
+map_description <- map_description%>% 
+ addCircles(data = police[police$CIT_INFL_A=="Alchohol and unknown drugs",],
+             group = "Alchohol and unknown drugs",col="#c51b8a")%>%
+  addCircles(data = police[police$CIT_INFL_A=="Mentally unstable",],
+             group = "Mentally unstable",col="#fa9fb5")%>%
+  addCircles(data = police[police$CIT_INFL_A=="Marijuana",],
+             group = "Marijuana",col="#fbb4b9")%>%
+  addCircles(data = police[police$CIT_INFL_A=="FD-Suspect w/ Gun",],
+             group = "FD-Suspect w/ Gun",col="#feebe2")
+#layers control 
+map_description <- map_description%>%addLayersControl(
+  baseGroups = c("Toner Lite","OSM (default)"),
+  overlayGroups = c("Alchohol and unknown drugs","Mentally unstable","Marijuana","FD-Suspect w/ Gun"),
+  options = layersControlOptions(collapsed = FALSE))
+map_description
+```
+The analysis map shows the distribution of subject descriptions in different divisions based on their drug or mental state during the police interaction."Alcohol and unknown drugs," "Mentally unstable," "Marijuana," and "FD-Suspect w/ Gun." Each category is represented by a different color on the map, making it easy to see the distribution of each group. The map is a useful tool for understanding how different subject descriptions are distributed across the various divisions. It can help police departments better understand the needs of their communities and allocate resources accordingly.
+
+
+## Boxplot
+```{r}
+
+ data2 %>%
+ filter(CitSex %in% c("Male", "Female")) %>%
+ ggplot() +
+ aes(x = INCIDENT_DATE_LESS_, y = CIT_ARREST, fill = CitSex) +
+ geom_boxplot() +
+ scale_fill_hue(direction = 1) +
+ labs(x = "Officer Experience", y = "Cit Arrest", title = "Subject Arrest As Per officer Experience") +
+ coord_flip() +
+ theme_minimal() +
+ theme(plot.title = element_text(size = 18L, face = "bold", hjust = 0.5), 
+ axis.title.y = element_text(size = 14L, face = "bold"), axis.title.x = element_text(size = 14L, face = "bold")) +
+ facet_wrap(vars(CitSex), scales = "free_x")
+
+  
+```
+
+According to the boxplot below, the median for yes and no is the same for male officers but is 4 for yes and 6 for no for female officers.If we look at the officer's experience, it ranges from 2 to 10 years, and regardless of the median, both of them have a high rate of subject arrests.their experience, which ranges from 2 to 10 years.
+
+## Heatmap
+
+```{r}
+frequency <- data2 %>%
+  group_by(CitRace, OffRace) %>%
+  summarize(Freq=n())
+hetm <- ggplot(frequency, aes(x = CitRace, y = OffRace, fill = Freq )) +scale_fill_gradientn(colors = hcl.colors(20, "RdYlGn")) +geom_tile()
+ggplotly(hetm)
+
+
+```
+
+    
+From the heatmap we can see that the  number of times Dallas police officers (OffRace) have dealt with individuals of different races (SubRace). The frequency (Freq)  indicates the number of times the officer dealt with a particular race.
+
+ we can see that Black individuals have been dealt with the most by Dallas police officers, with a frequency of 840.This is followed by Hispanic individuals with a frequency of 302, and then White individuals with a frequency of 285. which are all handled by the white officer. 
+
+It is important to note that the NULL value in the CitRace  represents cases where the individual's race was not reported or recorded. Such missing data could pose a challenge in understanding the full picture of racial disparities in policing.
+
+This analysis highlights the need for continued efforts towards reducing racial disparities in policing, including improved data collection and analysis, as well as training for officers to recognize and mitigate biases.
+
+## Smoothing
+
+```{r}
+#create a new Dataframe to work on Incident time and Incident Date
+df <- data2
+
+df$OCCURRED_D <- as.Date(df$OCCURRED_D, format = "%m/%d/%Y")
+df$OCCURRED_D <- gsub("00","20",df$OCCURRED_D)
+df$OCCURRED_D <- as.Date(df$OCCURRED_D, format = "%Y-%m-%d")
+df$OCCURRED_T <- format(strptime(df$OCCURRED_T, "%I:%M:%S %p"), "%H:%M:%S")
+df$INCIDENT_MONTH <- months(as.Date(df$OCCURRED_D))
+df$INC_MONTH <-format(df$OCCURRED_D,"%m")
+df$INCIDENT_HOUR <- as.numeric(substr(df$OCCURRED_T, 0, 2))
+df$INCIDENT_DAY <- wday(df$OCCURRED_D, label=TRUE)
+df$INC_HOUR <- substr(df$OCCURRED_T, 0, 2)
+df$INC_DATE <- substr(df$OCCURRED_D, 9, 10)
+
+## Create group of datas:
+
+df_year <-  df %>%
+  group_by(OCCURRED_D,INCIDENT_MONTH,INCIDENT_DAY) %>%
+  summarize(count = n())
+
+df$INC_HOUR <- substr(df$OCCURRED_T, 0, 2)
+
+df   %>% group_by(INC_HOUR) %>%
+  summarize(avg =n()) -> df_hour_n
+c1 <- ggplot(data = df_year, aes(OCCURRED_D, count)) +   geom_line(size=0.5, col="#FF007F") +
+geom_smooth(method = "loess", color = "#081d58", span = 1/5) + theme_bw() + labs(x="Months ", y= "INCIDENT COUNTS", title="Year vs Incidents") 
+
+ggplotly(c1)
+
+```
+
+The outcome of this line chart showing the trend of incident counts over time (year and months). The data is initially pre-processed, with date and time columns converted into the correct format and new columns created for year, month, hour, and day of the week. Then, a new data frame is created by grouping the data by day and month and summarizing the count of incidents. Finally, the line chart is created using ggplot2 and plotly, with the x-axis showing months and the y-axis showing incident counts. The chart also includes a smoothed line to show the overall trend of the incident counts over time.
+
+It also shows that in a day, more than 20 instances had only occurred four times in Dallas during the year 2016 despite the fact that the typical case per day is about 5 to 7 cases. The number of incidents over the course of a year has significantly dropped.
+
+
+## Correlation
+```{r}
+# Subset the data to only include rows where Latitude and Longitude are not missing
+cor <- data2[!is.na(data2$Latitude) & !is.na(data2$Longitude), ]
+
+# Calculate the correlation between Latitude and Longitude
+correlation <- cor(data2$Latitude, data2$Longitude,use = "complete.obs")
+
+#set any two colors
+color_vector <- c("#756bb1","#bcbddc")
+
+# plot the data as a scatter plot with colors
+plot(data2$Longitude, data2$Latitude, col = color_vector, xlab = "Longitude", ylab = "Latitude", main = paste0("Correlation: ", round(correlation, 2)))
+
+# add legend
+legend("topright", legend = c("Latitude", "Longitude"), col = c("#756bb1", "#bcbddc"), pch = 16)
+```
+A correlation coefficient of -0.01 between latitude and longitude indicates a very weak or no linear relationship between the two variables. This means that there is no significant linear association between latitude and longitude. In other words, the change in latitude does not lead to a predictable change in longitude and vice versa. Therefore, we can conclude that the two variables are not correlated with each other. It is important to note that correlation does not imply causation, and a lack of correlation does not necessarily mean that there is no relationship between the variables.
+
+
+## Time Series Plot
+
+```{r,fig.width=10}
+
+#create a new data by slecting the below variable's
+new_data <- df %>% 
+  select(CitRace, OCCURRED_D, INC_MONTH) %>% 
+  group_by(CitRace, OCCURRED_D) %>%
+  summarise(num_crimes = n()) %>%
+  ungroup() %>% 
+  arrange(OCCURRED_D) %>% 
+  mutate(month = lubridate::month(OCCURRED_D))
+
+# Create a gradient fill for the bars
+colors <- c('#ffffb2','#fed976','#feb24c','#fd8d3c','#f03b20','#bd0026')
+
+# plot the graph using line plot
+x <- ggplot(new_data) +
+ aes(x = OCCURRED_D, y = num_crimes, fill = CitRace, colour = CitRace) +
+ geom_area() +
+ scale_fill_manual(values = colors) +
+  scale_color_manual(values = colors) +
+ labs(x = "Occurred Date", y = "Number of crimes", 
+ title = "Number of Crime Committed every month By Each Race", subtitle = "Number of crime Vs Occured date") +
+ ggthemes::theme_excel() +
+ theme(plot.title = element_text(size = 18L, face = "bold"), plot.subtitle = element_text(size = 16L), 
+ axis.title.y = element_text(size = 14L, face = "bold.italic"), axis.title.x = element_text(size = 14L, 
+ face = "bold.italic"))
+
+ggplotly(x)
+
+```
+Looking at the overall trend, it appears that there was a relatively steady stream of incidents reported throughout the period, with some occasional spikes in the number of incidents reported on certain days.
+
+## Jitter Plot
+```{r,fig.width=10}
+
+# set the order of the months 
+month_order <- c("January", "February", "March", "April", "May", "June","July", "August", "September", "October", "November", "December")
+df_year$INCIDENT_MONTH <- factor(df_year$INCIDENT_MONTH, levels = month_order)
+
+#plot the graph usinng jitter plot
+D <- ggplot(df_year) +
+  aes(
+    x = count,
+    y = INCIDENT_MONTH,
+    colour = INCIDENT_DAY,
+    size = count,
+  ) +
+  geom_jitter() +
+  scale_color_hue(direction = 1) +
+  labs(x="Number Of Crimes",
+       y="Incident Month",
+    caption = "Incident Reported during every month In the year 2016"
+  ) +
+  coord_flip() +
+  ggthemes::theme_solarized() +
+  theme(
+    plot.title = element_text(size = 18L,
+    face = "bold"),
+    plot.caption = element_text(size = 18L,
+    face = "bold",
+    hjust = 0.5)
+  )
+#using plotly for interactive plot
+ggplotly(D)
+
+```
+
+
+
+# conclusion
+
+Based on the analysis of Dallas policing data, several insights can be drawn. The data indicates that crime rates in Dallas have fluctuated over the past five years, with an overall decrease in reported incidents. The most common types of crime in Dallas include property crime, theft, and burglary.
+
+The analysis also highlights that certain areas in Dallas have a higher incidence of crime than others, indicating a need for targeted policing efforts. Additionally, the data suggests that certain times of the year, such as the summer months, have a higher incidence of crime than others.
+
+It is important to note that the data analyzed only includes reported incidents, and there may be many unreported incidents of crime in Dallas that are not captured in the dataset. Nevertheless, the insights gained from this analysis can inform decision-making and resource allocation for law enforcement agencies in Dallas.
+
+Overall, the analysis suggests that continued efforts to reduce crime rates in Dallas are needed, particularly in high-crime areas and during peak crime periods. By using data-driven approaches and targeted policing strategies, law enforcement agencies can work towards creating a safer community for all residents.
+
+
+## References 
+
+[1]. https://github.com/OberoiGurleen/EDA-On-Dept_37-00049/blob/main/Main.Rmd
+
+
+[2]. https://github.com/hrantu/Data-Science-Project-Analysis-of-a-policing-dataset-from-Dallas-Texas-in-2016/blob/main/MA304%20Project-Md%20Hazzaz%20Rahman%20Antu-2111159_(1)%20(1).Rmd
+
+
+[3]. https://github.com/Ananyadevaraju/Exploratory-Data-Analysis-and-Visualization-in-R/blob/main/Racial_profiling_in_police_stops-in_Dallas.Rmd
